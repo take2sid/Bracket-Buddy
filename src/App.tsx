@@ -1,64 +1,76 @@
-import { useEffect, useState } from 'react';
-import Navbar from './components/layout/Navbar';
-import LandingPage from './pages/LandingPage';
+import { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
 import AuthPage from './pages/AuthPage';
 import Dashboard from './pages/Dashboard';
-import SavedInsights from './pages/SavedInsights';
-import { Page, User } from './types';
+import LandingPage from './pages/LandingPage';
+import { User } from './types';
 
-const USER_KEY = 'bb_user';
+type AppState = 'loading' | 'landing' | 'auth' | 'dashboard';
 
 export default function App() {
-  const [page, setPage] = useState<Page>('landing');
+  const [appState, setAppState] = useState<AppState>('loading');
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem(USER_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as User;
-        setUser(parsed);
-        setPage('dashboard');
-      } catch {
-        localStorage.removeItem(USER_KEY);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          email: session.user.email ?? '',
+          name: session.user.user_metadata?.name ?? session.user.email ?? 'User',
+        });
+        setAppState('dashboard');
+      } else {
+        setAppState('landing');
       }
-    }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          id: session.user.id,
+          email: session.user.email ?? '',
+          name: session.user.user_metadata?.name ?? session.user.email ?? 'User',
+        });
+        setAppState('dashboard');
+      } else {
+        setUser(null);
+        setAppState('landing');
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleSignIn = (u: User) => {
-    setUser(u);
-    localStorage.setItem(USER_KEY, JSON.stringify(u));
-    setPage('dashboard');
-  };
-
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem(USER_KEY);
-    setPage('landing');
+    setAppState('landing');
   };
 
-  const handleNavigate = (p: Page) => {
-    if ((p === 'dashboard' || p === 'saved') && !user) {
-      setPage('auth');
-      return;
-    }
-    setPage(p);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  if (appState === 'loading') {
+    return (
+      <div className="min-h-screen bg-navy-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-accent-orange border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
-  if (page === 'landing') return <LandingPage onNavigate={handleNavigate} />;
-  if (page === 'auth') return <AuthPage onSignIn={handleSignIn} onNavigate={handleNavigate} />;
+  if (appState === 'landing') {
+    return <LandingPage onGetStarted={() => setAppState('auth')} />;
+  }
 
-  return (
-    <div className="min-h-screen bg-navy-950">
-      <Navbar
-        currentPage={page}
-        user={user}
-        onNavigate={handleNavigate}
-        onSignOut={handleSignOut}
+  if (appState === 'auth') {
+    return (
+      <AuthPage
+        onAuth={(u) => {
+          setUser(u);
+          setAppState('dashboard');
+        }}
+        onBack={() => setAppState('landing')}
       />
-      {page === 'dashboard' && user && <Dashboard user={user} />}
-      {page === 'saved' && user && <SavedInsights user={user} />}
-    </div>
-  );
+    );
+  }
+
+  return <Dashboard user={user!} onSignOut={handleSignOut} />;
 }
